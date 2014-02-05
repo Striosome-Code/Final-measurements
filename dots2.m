@@ -4,8 +4,7 @@ Input:
 script (dots to cropped images) on a folder of hemisphere images and
 tetrode dot images.
 2) excel file 'tetrodelist', filled in during dots.m  
-3) new blank excel file 'measurements' -- must create this prior to running
-4) relevant values, most at the beginning of the script, including: 
+3) relevant values, most at the beginning of the script, including: 
 values of 0 or 1 to turn the distance measurement, selectivity measurement, and 
 second desquig method on or off; 
 diameters of squiggles and small regions to be removed; 
@@ -22,8 +21,8 @@ nearest striosome pixel to each tetrode
 ventricles highlighted in red 
 %}
 
-distance_switch = 1; %1 for on, 0 for off
-selectivity_switch = 1; %" "
+distance_switch = 0; %1 for on, 0 for off
+selectivity_switch = 0; %" "
 desquig2_switch = 0; %" "
 
 pixels_per_mm = 1000; %fill in avg from images
@@ -65,7 +64,7 @@ for c = 1:length(ttnums)
         [pathstr, name, ext] = fileparts(filename);    
 
         img = imread(fullfile(['Output cropped images - tetrode ',num2str(ttnums(c))],filename));
-        img = rgb2gray(img); 
+        %img = rgb2gray(img); 
         
         if isempty(strfind(name, 'MOR1')) == 0
             mor1{end + 1} = img;    
@@ -111,7 +110,7 @@ for c = 1:length(ttnums)
     mid_index = find(mid_index);
     mid_img = mor1{1,mid_index};
 
-    [y,x] = size(mid_img); %flipped x and y because rows = y, cols = x
+    [x,y] = size(mid_img); 
     [tetrode] = [round(x/2), round(y/2)]; %given it's at exact center of middle
     %image
 
@@ -127,7 +126,11 @@ for c = 1:length(ttnums)
     ratios = zeros(1,length(distances) - 1); %to store ratios of number of striosome
     %pixels to total area of all regions determined by each distance value
 
+    mean_brightnesses = []; %to store mean brightnesses in shells
+    
     for i = 1:length(distances) - 1
+        brightness = []; 
+        
         %middle layer - consider as separate case
         r1 = pixels_per_mm/1000*distances(i); %converts distance to pixels
         r2 = pixels_per_mm/1000*distances(i + 1);
@@ -141,6 +144,7 @@ for c = 1:length(ttnums)
             for j = 1:y
                 if (k - tetrode(1))^2 + (j - tetrode(2))^2 < r2^2 && (k - tetrode(1))^2 + (j - tetrode(2))^2 >= r1^2
                     num_strio_px(i) = num_strio_px(i) + (middle_img(k,j) == 1);
+                    brightness = [brightness mid_img(k,j)]; %brightness of pixel in middle layer mor1 img
                 end;
             end;
         end;
@@ -158,12 +162,14 @@ for c = 1:length(ttnums)
                 if any(mor1nums == ttregnum + m)
                     check1 = 1;
                     image1 = strio{mid_index + m};
+                    mor1image1 = mor1{mid_index + m};
                     [a,b] = size(image1);
                 end;
 
                 if any(mor1nums == ttregnum - m)                
                     check2 = 1;
                     image2 = strio{mid_index - m};
+                    mor1image2 = mor1{mid_index - m};
                     [cc,d] = size(image2); %(technically they should all be the same size
                     %but we don't want out-of-bounds errors)
                 end;
@@ -179,6 +185,7 @@ for c = 1:length(ttnums)
                         for j = 1:b
                             if (k - tetrode(1))^2 + (j - tetrode(2))^2 < radius2^2 && (k - tetrode(1))^2 + (j - tetrode(2))^2 >= radius1^2
                                 num_strio_px(i) = num_strio_px(i) + (image1(k,j) == 1);
+                                brightness = [brightness mor1image1(k,j)];
                             end;
                         end;
                     end;
@@ -190,6 +197,7 @@ for c = 1:length(ttnums)
                         for j = 1:d
                             if (k - tetrode(1))^2 + (j - tetrode(2))^2 < radius2^2 && (k - tetrode(1))^2 + (j - tetrode(2))^2 >= radius1^2
                                 num_strio_px(i) = num_strio_px(i) + (image2(k,j) == 1);
+                                brightness = [brightness mor1image2(k,j)];
                             end;
                         end;
                     end;
@@ -197,23 +205,26 @@ for c = 1:length(ttnums)
             end;                   
         end;
         ratios(i) = num_strio_px(i)/areas(i); %calculate/store ratio
+        mean_brightnesses = [mean_brightnesses mean(brightness)];
     end;
 
     display(ratios);
 
     %cell to store distances & ratios in 2 columns 
-    A = cell(1,3);
-    B = cell(length(distances),3);
+    A = cell(1,4);
+    B = cell(length(distances),4);
     
     A{1,1} = 'Tetrode';
     A{1,2} = 'Distance';
     A{1,3} = 'Density Ratio';
+    A{1,4} = 'Shell Mean Brightness';
     
     B{1,1} = ttnums(c); %tetrode number
     
     for t = 1:length(distances) - 1 
         B{t,2} = distances(t + 1);
         B{t,3} = ratios(t);
+        B{t,4} = mean_brightnesses(t);
     end;
 
     filename = 'measurements.xlsx'; %must have made this file beforehand
@@ -224,33 +235,40 @@ for c = 1:length(ttnums)
     length_cst_px = pixels_per_mm/1000*length_cst; %length constant in pixels
     [s,t] = size(strio{1});
 
-    influence = zeros(1,s*t*length(strio)+100); %matrix to store exponential decay
-    %influence values
-
+    influence = [];
+    
     for i = 1:length(strio)
         [x,y] = size(strio{i});
         display(i);
         for k = 1:x
             for j = 1:y
-                side1 = (abs(mid_index - i)*pixels_per_mm/1000*30); %distance in z direction
+                side1 = (abs(i - mid_index)*pixels_per_mm/1000*30); %distance in z direction
                 side2 = ((abs(k - tetrode(1)))^2 + (abs(j - tetrode(2)))^2)^(1/2); %planar distance from tetrode tip
                 distance = (side1^2 + side2^2)^(1/2); 
-                px_influence = strio{i}(k,j) * (1 - exp(-distance/length_cst_px));
-                influence(i*k+j) = px_influence;
+                px_influence = mor1{1,i}(k,j) * (1 - exp(-distance/length_cst_px));
+                influence = [influence px_influence];                
             end;
         end;
     end;
-
-    total_influence = sum(influence); %total tetrode influence with exponential
-    %decay 
+    
+    total_influence = sum(influence);
     display(total_influence);
 
     %write total tetrode influence to excel file
-    C = {'With Exponential Decay'};
-    xlswrite(filename,C,1,'D1');
-    xlswrite(filename,total_influence,1,['D',num2str((c - 1)*3 + 2)]);
-
-clear influence %bc this takes a ton of memory
+    C = {'Exponential 1','Exponential 2'};
+    xlswrite(filename,C,1,'E1');
+    xlswrite(filename,total_influence,1,['E',num2str((c - 1)*3 + 2)]);
+    
+    clearvars influence
+    
+    %second exponential calculation 
+    influence = zeros(1,length(ratios));
+    for k = 1:length(ratios)
+        influence(k) = ratios(k) * (1 - exp(-(15 + 30*(k - 1))/length_cst_px));
+    end
+    
+    total_influence = sum(influence)/length(influence);
+    xlswrite(filename,total_influence,1,['F',num2str((c - 1)*3 + 2)]);
 
 %---DISTANCE MEASURE---
     if distance_switch == 1
@@ -375,8 +393,8 @@ clear influence %bc this takes a ton of memory
         %write min dist and min layer to excel file
         C = {'Minimum distance','Layer in stack'}; 
         D = {minimum, min_layer};
-        xlswrite(filename,C,1,'E1');
-        xlswrite(filename,D,1,['E',num2str((c - 1)*3 + 2)]);
+        xlswrite(filename,C,1,'G1');
+        xlswrite(filename,D,1,['G',num2str((c - 1)*3 + 2)]);
 
         %find image containing minimum distance point
         min_ind = (mor1nums == min_layer);
@@ -387,9 +405,18 @@ clear influence %bc this takes a ton of memory
         iptsetpref('ImshowBorder','tight');
         figure; imshow(min_layer_img);
         hold on 
-        filledCircle([min_locx,min_locy],5,100,'r');
+        filledCircle([min_locy,min_locx],5,100,'r');
         h = gcf;
         saveas(h,['Output dot images - tetrode ',num2str(ttnums(c)),'/',mor1names{min_ind},'_dot.tif'],'tif'); %save 
+        %image with dot in output folder
+        hold off
+        
+        %save tetrode dot image
+        figure; imshow(mid_img);
+        hold on 
+        filledCircle([tetrode(1),tetrode(2)],5,100,'b');
+        h = gcf;
+        saveas(h,['Output dot images - tetrode ',num2str(ttnums(c)),'/',mor1names{mid_index},'_tipdot.tif'],'tif'); %save 
         %image with dot in output folder
         hold off
 
@@ -400,8 +427,10 @@ clear influence %bc this takes a ton of memory
             display(min_layer2); %shows the number of the layer in which the minimum occurs
 
             %write min dist and min layer to excel file
-            C = {'Minimum distance - desquig2','Layer in stack - desquig2'; min2, min_layer2};
-            xlswrite(filename,C,1,'F1');
+            C = {'Minimum distance - desquig2','Layer in stack - desquig2'};
+            D = {min2, min_layer2};
+            xlswrite(filename,C,1,'J1');
+            xlswrite(filename,D,1,['J',num2str((c - 1)*3 + 2)]);
 
             %find image containing minimum distance point
             min_ind2 = (mor1nums == min_layer2);
@@ -412,7 +441,7 @@ clear influence %bc this takes a ton of memory
             iptsetpref('ImshowBorder','tight');
             figure; imshow(min_layer_img2);
             hold on 
-            filledCircle([min_locx2,min_locy2],5,100,'r');
+            filledCircle([min_locy2,min_locx2],5,100,'r');
             h = gcf;
             saveas(h,['Output dot images - tetrode ',num2str(ttnums(c)),'/',mor1names{min_ind},'_dot_2.tif'],'tif'); %save 
             %image with dot in output folder
@@ -439,8 +468,8 @@ clear influence %bc this takes a ton of memory
                rgbimg = repmat(double(img),[1 1 3]); %make RGB img
                current_ventricles = ventricle_list{1,k};  
                %loop through x,y coords
-               for j = 1:b
-                   for i = 1:a
+               for j = 1:a
+                   for i = 1:b
                        if current_ventricles(j,i) == 1 %if current px is ventricle
                           rgbimg(j,i,:) = [1 0 0]; %color red
                        end
@@ -548,7 +577,7 @@ clear influence %bc this takes a ton of memory
         
         %save ratio
         C = {'Selectivity Ratio'};
-        xlswrite(filename,C,1,'G1');
-        xlswrite(filename,ratio,1,['G',num2str((c - 1)*3 + 2)]);        
+        xlswrite(filename,C,1,'I1');
+        xlswrite(filename,ratio,1,['I',num2str((c - 1)*3 + 2)]);        
     end
 end
